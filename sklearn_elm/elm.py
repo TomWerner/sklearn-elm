@@ -56,16 +56,18 @@ class NeuronGroup:
 
 
 class BaseELM(BaseEstimator):
-    def __init__(self, neuron_dictionary, alpha_l2=1e-6, solver=None):
+    def __init__(self, neuron_dictionary, expect_scaled_data=False, alpha_l2=1e-6, solver=None):
         self.alpha_l2 = alpha_l2
         self.neuron_groups = []
         self.neuron_dictionary = neuron_dictionary
         self.coefs_ = None
         self.fitted_ = False
         self.solver = solver
+        self.expect_scaled_data = expect_scaled_data
 
     def get_params(self, deep=True):
-        return {'alpha_l2': self.alpha_l2, 'neuron_dictionary': self.neuron_dictionary, 'solver': self.solver}
+        return {'alpha_l2': self.alpha_l2, 'neuron_dictionary': self.neuron_dictionary,
+                'solver': self.solver, 'expect_scaled_data': self.expect_scaled_data}
 
     def set_params(self, **params):
         for key, value in params.items():
@@ -90,16 +92,21 @@ class BaseELM(BaseEstimator):
         """
         for neuron_type, neuron_count in self.neuron_dictionary.items():
             self.neuron_groups.append(NeuronGroup(X.shape[1], neuron_type, neuron_count))
-        self.scaler = StandardScaler(with_mean=scipy.sparse.issparse(X))
-        X = self.scaler.fit_transform(X)
+
+        if not self.expect_scaled_data:
+            self.scaler = StandardScaler(with_mean=(not scipy.sparse.issparse(X)))
+            X = self.scaler.fit_transform(X)
 
         H = np.hstack(neuron_group.transform(X) for neuron_group in self.neuron_groups)
+        logging.info("H is %s and is %s" % (str(H.shape[0]), ("sparse" if scipy.sparse.issparse(H) else "not sparse")))
 
         if self.solver is None:
             Ht_H = safe_sparse_dot(H.T, H, dense_output=True)
             Ht_H += np.identity(Ht_H.shape[0]) * self.alpha_l2
             Ht_Y = safe_sparse_dot(H.T, y, dense_output=True)
+            logging.info("Ht_H is %s, and Ht_Y is %s" % (str(Ht_H.shape), str(Ht_Y.shape)))
             self.coefs_ = scipy.linalg.solve(Ht_H, Ht_Y, sym_pos=True)
+            logging.info("Done solving")
         else:
             self.solver = self.solver.fit(H, y)
         self.fitted_ = True
@@ -119,7 +126,8 @@ class BaseELM(BaseEstimator):
 
         if not self.fitted_:
             raise ValueError("ELM not fitted")
-        X = self.scaler.transform(X)
+        if not self.expect_scaled_data:
+            X = self.scaler.transform(X)
         H = np.hstack(neuron_group.transform(X) for neuron_group in self.neuron_groups)
 
         if self.solver is None:
@@ -129,20 +137,20 @@ class BaseELM(BaseEstimator):
 
 
 class ClassificationELM(BaseELM, ClassifierMixin):
-    def __init__(self, neuron_dictionary, alpha_l2=1e-6, solver=None):
-        super(ClassificationELM, self).__init__(neuron_dictionary, alpha_l2, solver)
+    def __init__(self, neuron_dictionary, expect_scaled_data=False, alpha_l2=1e-6, solver=None):
+        super(ClassificationELM, self).__init__(neuron_dictionary, expect_scaled_data, alpha_l2, solver)
 
     def predict(self, X):
         prediction = super(ClassificationELM, self).predict(X)
         prediction[prediction < .5] = 0
         prediction[prediction >= .5] = 1
 
-        return prediction
+        return np.asarray(prediction, dtype=int)
 
 
 class RegressionELM(BaseELM, RegressorMixin):
-    def __init__(self, neuron_dictionary, alpha_l2=1e-6, solver=None):
-        super(RegressionELM, self).__init__(neuron_dictionary, alpha_l2, solver)
+    def __init__(self, neuron_dictionary,  expect_scaled_data=False, alpha_l2=1e-6, solver=None):
+        super(RegressionELM, self).__init__(neuron_dictionary, expect_scaled_data, alpha_l2, solver)
 
 
 # from sklearn import datasets
